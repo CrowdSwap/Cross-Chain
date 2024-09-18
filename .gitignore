@@ -1,0 +1,9 @@
+# IDE
+.idea
+.vscode/*
+
+package-lock.json
+/node_modules
+artifacts
+cache
+.openzeppelin/unknown-31337.json
