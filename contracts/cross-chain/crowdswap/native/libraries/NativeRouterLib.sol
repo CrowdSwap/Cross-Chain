@@ -471,7 +471,7 @@ library NativeRouterLib {
         uint256 destinationMinAmount_,
         address tokenXAddress_,
         address destinationPairAddress_
-    ) internal returns (bool, uint256, uint256) {
+    ) internal view returns (bool, uint256, uint256) {
         uint256 _tokenXAmount = ((usdValue_) *
             (10 ** IERC20(tokenXAddress_).decimals())) / tokenXPrice_;
         uint256 _crowdAmount = _getAmountOut(
@@ -509,6 +509,39 @@ library NativeRouterLib {
         uint256 _numerator = amountInWithFee * _reserveOut;
         uint256 _denominator = (_reserveIn * 1000) + amountInWithFee;
         amountOut = _numerator / _denominator;
+    }
+
+    function _callAggregator(
+        address _aggregator,
+        IERC20Upgradeable fromToken_,
+        uint256 amount_,
+        bytes memory swapData_
+    ) internal returns (bool, uint256, string memory) {
+        uint256 value;
+        if (fromToken_.isETH()) {
+            value = amount_;
+        } else {
+            fromToken_.uniApprove(_aggregator, amount_);
+        }
+
+        (bool success, bytes memory returnData) = _aggregator.call{
+            value: value
+        }(swapData_);
+        if (!success) {
+            string memory reason;
+            if (returnData.length < 68) {
+                reason = "ce35";
+            } else {
+                assembly {
+                    returnData := add(returnData, 0x04)
+                }
+                reason = abi.decode(returnData, (string));
+            }
+            return (false, 0, reason);
+        } else {
+            uint256 amountOut_ = abi.decode(returnData, (uint256));
+            return (true, amountOut_, "");
+        }
     }
 
     /**

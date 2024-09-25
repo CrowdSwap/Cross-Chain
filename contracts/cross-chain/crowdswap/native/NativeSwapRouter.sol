@@ -17,9 +17,11 @@ contract NativeSwapRouter is NativeBaseRouter {
 
     mapping(address => bool) public supportedTokens;
     mapping(address => bool) public isVerified;
+    mapping(address => bool) public isBuybackerVerified;
 
-    uint256 public sellAmountThreshold;
-    uint256 public totalSellAmount;
+    uint256 public crowdDebtThreshold;
+    uint256 public totalCrowdSellAmount;
+    uint256 public totalCrowdBuyBakedAmount;
 
     function initialize(
         NativeRouterLib.SwapInitializeParams memory initParams_
@@ -96,6 +98,38 @@ contract NativeSwapRouter is NativeBaseRouter {
         );
     }
 
+    function buybackCrowd(
+        IERC20Upgradeable fromToken_,
+        uint256 amount_,
+        bytes[] memory swapDataParts_
+    ) external whenNotPaused nonReentrant {
+        if (!isBuybackerVerified[msg.sender])
+            revert NativeRouterLib.InvalidCaller();
+
+        bytes memory swapData_ = abi.encodePacked(
+            swapDataParts_[0],
+            abi.encode(address(this)), //receiver address
+            swapDataParts_[1]
+        );
+
+        (
+            bool success_,
+            uint256 crowdAmount_,
+            string memory errorMessage_
+        ) = NativeRouterLib._callAggregator(
+                aggregator,
+                fromToken_,
+                amount_,
+                swapData_
+            );
+
+        if (success_) {
+            totalCrowdBuyBakedAmount += crowdAmount_;
+        } else {
+            revert(errorMessage_);
+        }
+    }
+
     function spend(
         address tokenAddress_,
         address receiver_,
@@ -108,25 +142,44 @@ contract NativeSwapRouter is NativeBaseRouter {
     function verify(address address_, bool isVerified_) external onlyOwner {
         isVerified[address_] = isVerified_;
     }
+    function verifyBuybacker(
+        address address_,
+        bool isVerified_
+    ) external onlyOwner {
+        isBuybackerVerified[address_] = isVerified_;
+    }
 
     /**
      * @dev If you want to set/change one of the variables, set the other input to -1
-     * @param _sellAmountThreshold New value of sellAmountThreshold
-     * @param _totalSellAmount New value of totalSellAmount
+     * @param crowdDebtThreshold_ New value of crowdDebtThreshold
+     * @param totalCrowdSellAmount_ New value of totalCrowdSellAmount
+     * @param totalCrowdBuyBakedAmount_ New value of totalCrowdBuyBakedAmount
      */
     function setConfiguration(
-        int256 _sellAmountThreshold,
-        int256 _totalSellAmount
+        int256 crowdDebtThreshold_,
+        int256 totalCrowdSellAmount_,
+        int256 totalCrowdBuyBakedAmount_
     ) external onlyOwner {
-        if (_sellAmountThreshold >= 0) {
-            sellAmountThreshold = uint256(_sellAmountThreshold);
+        if (crowdDebtThreshold_ >= 0) {
+            crowdDebtThreshold = uint256(crowdDebtThreshold_);
         }
-        if (_totalSellAmount >= 0) {
-            totalSellAmount = uint256(_totalSellAmount);
+        if (totalCrowdSellAmount_ >= 0) {
+            totalCrowdSellAmount = uint256(totalCrowdSellAmount_);
+        }
+        if (totalCrowdBuyBakedAmount_ >= 0) {
+            totalCrowdBuyBakedAmount = uint256(totalCrowdBuyBakedAmount_);
         }
     }
 
     /* ========== PUBLICS ========== */
+
+    function isCrowdSellUnderThreshold(
+        uint256 newCrowdAmount_
+    ) public view returns (bool) {
+        return
+            totalCrowdSellAmount + newCrowdAmount_ <
+            totalCrowdBuyBakedAmount + crowdDebtThreshold;
+    }
 
     function setSupportedTokens(
         address[] memory supportedTokens_,
@@ -397,6 +450,7 @@ contract NativeSwapRouter is NativeBaseRouter {
             }
         }
 
+        totalCrowdSellAmount += _crowdAmount;
         emit NativeRouterLib.Sold(
             handleParams_.messageId,
             _details.sourceTokenAddress,
@@ -470,9 +524,8 @@ contract NativeSwapRouter is NativeBaseRouter {
     }
 
     function _validateThreshold(uint256 crowdAmount_) private {
-        totalSellAmount += crowdAmount_;
         require(
-            totalSellAmount < sellAmountThreshold,
+            isCrowdSellUnderThreshold(crowdAmount_),
             "NativeSwapRouter: Threshold Reached!"
         );
     }
